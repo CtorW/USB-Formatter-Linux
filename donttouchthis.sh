@@ -6,29 +6,36 @@ display_message() {
 
 check_and_install_deps() {
     local format="$1"
-    local deps=""
+    local tool=""
+    local pkg=""
+
     case "$format" in
-        "FAT32")
-            deps="dosfstools"
-            ;;
-        "exFAT")
-            deps="exfatprogs"
-            ;;
-        "NTFS")
-            deps="ntfs-3g"
-            ;;
-        "HFS+")
-            deps="hfsplus"
-            ;;
-        "APFS")
-            deps="apfs-fuse"
-            ;;
+        "FAT32") tool="mkfs.fat"; pkg="dosfstools";;
+        "exFAT") tool="mkfs.exfat"; pkg="exfatprogs";;
+        "NTFS") tool="mkfs.ntfs"; pkg="ntfs-3g";;
+        "HFS+") tool="mkfs.hfsplus"; pkg="hfsprogs";;
+        "APFS") tool="apfs-fuse"; pkg="apfs-fuse";;
     esac
 
-    if ! pacman -Qs "$deps" > /dev/null; then
-        display_message "The required packages for $format ($deps) are not installed. We will install them now."
-        if ! sudo pacman -S --noconfirm "$deps"; then
-            display_message "Failed to install dependencies. Please check your internet connection or package manager settings."
+    if ! command -v "$tool" &> /dev/null; then
+        display_message "The required tool ($tool) is not installed. We will attempt to install it."
+        if command -v pacman &> /dev/null; then
+            if ! sudo pacman -S --noconfirm "$pkg"; then
+                display_message "Failed to install dependencies with pacman. Please install '$pkg' manually."
+                exit 1
+            fi
+        elif command -v apt-get &> /dev/null; then
+            if ! sudo apt-get install -y "$pkg"; then
+                display_message "Failed to install dependencies with apt-get. Please install '$pkg' manually."
+                exit 1
+            fi
+        elif command -v dnf &> /dev/null; then
+            if ! sudo dnf install -y "$pkg"; then
+                 display_message "Failed to install dependencies with dnf. Please install '$pkg' manually."
+                 exit 1
+            fi
+        else
+            display_message "Could not determine package manager. Please install '$pkg' manually."
             exit 1
         fi
     fi
@@ -43,10 +50,10 @@ if ! whiptail --yesno "⚠️ Are you aware that this tool will format a USB dri
     exit 0
 fi
 
-usb_drives=$(lsblk -d -o NAME,SIZE,MODEL | grep -E 'sd|hd|nvme')
+usb_drives=$(lsblk -d -o NAME,SIZE,MODEL,RM | awk '$4=="1" {print $1, $2 " " $3}')
 
 if [ -z "$usb_drives" ]; then
-    display_message "No USB drives detected. Please ensure your drive is plugged in."
+    display_message "No removable drives detected. Please ensure your drive is plugged in."
     exit 1
 fi
 
@@ -81,21 +88,23 @@ if [[ $(lsblk -l | grep "$chosen_drive" | grep -v "$chosen_drive"p) ]]; then
 fi
 
 sudo parted -s "/dev/$chosen_drive" mklabel msdos
-
 sudo parted -s "/dev/$chosen_drive" mkpart primary 0% 100%
+sleep 2
+partition_name=$(lsblk -p -o NAME "/dev/$chosen_drive" | grep -v "NAME" | tail -n 1)
+
 
 case "$chosen_format" in
     "FAT32")
-        sudo mkfs.fat -F 32 "/dev/${chosen_drive}1"
+        sudo mkfs.fat -F 32 "$partition_name"
         ;;
     "exFAT")
-        sudo mkfs.exfat "/dev/${chosen_drive}1"
+        sudo mkfs.exfat "$partition_name"
         ;;
     "NTFS")
-        sudo mkfs.ntfs -f "/dev/${chosen_drive}1"
+        sudo mkfs.ntfs -f "$partition_name"
         ;;
     "HFS+")
-        sudo mkfs.hfsplus "/dev/${chosen_drive}1"
+        sudo mkfs.hfsplus "$partition_name"
         ;;
     "APFS")
         display_message "APFS formatting is complex and requires specific tools. The 'apfs-fuse' package provides read-only support on Linux. For full functionality, it is recommended to format on a Mac. Script will exit."
